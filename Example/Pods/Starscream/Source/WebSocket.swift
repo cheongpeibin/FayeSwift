@@ -221,7 +221,7 @@ public class WebSocket : NSObject, NSStreamDelegate {
         
         var port = url.port
         if port == nil {
-            if ["wss", "https"].contains(url.scheme) {
+            if ["wss", "https"].contains(url.scheme!) {
                 port = 443
             } else {
                 port = 80
@@ -279,7 +279,7 @@ public class WebSocket : NSObject, NSStreamDelegate {
         guard let inStream = inputStream, let outStream = outputStream else { return }
         inStream.delegate = self
         outStream.delegate = self
-        if ["wss", "https"].contains(url.scheme) {
+        if ["wss", "https"].contains(url.scheme!) {
             inStream.setProperty(NSStreamSocketSecurityLevelNegotiatedSSL, forKey: NSStreamSocketSecurityLevelKey)
             outStream.setProperty(NSStreamSocketSecurityLevelNegotiatedSSL, forKey: NSStreamSocketSecurityLevelKey)
         } else {
@@ -296,7 +296,7 @@ public class WebSocket : NSObject, NSStreamDelegate {
         }
         if let cipherSuites = self.enabledSSLCipherSuites {
             if let sslContextIn = CFReadStreamCopyProperty(inputStream, kCFStreamPropertySSLContext) as! SSLContextRef?,
-                   sslContextOut = CFWriteStreamCopyProperty(outputStream, kCFStreamPropertySSLContext) as! SSLContextRef? {
+                   let sslContextOut = CFWriteStreamCopyProperty(outputStream, kCFStreamPropertySSLContext) as! SSLContextRef? {
                 let resIn = SSLSetEnabledCiphers(sslContextIn, cipherSuites, cipherSuites.count)
                 let resOut = SSLSetEnabledCiphers(sslContextOut, cipherSuites, cipherSuites.count)
                 if resIn != errSecSuccess {
@@ -340,16 +340,18 @@ public class WebSocket : NSObject, NSStreamDelegate {
     //delegate for the stream methods. Processes incoming bytes
     public func stream(aStream: NSStream, handleEvent eventCode: NSStreamEvent) {
         
-        if let sec = security where !certValidated && [.HasBytesAvailable, .HasSpaceAvailable].contains(eventCode) {
-            let possibleTrust: AnyObject? = aStream.propertyForKey(kCFStreamPropertySSLPeerTrust as String)
-            if let trust: AnyObject = possibleTrust {
-                let domain: AnyObject? = aStream.propertyForKey(kCFStreamSSLPeerName as String)
-                if sec.isValid(trust as! SecTrustRef, domain: domain as! String?) {
-                    certValidated = true
-                } else {
-                    let error = errorWithDetail("Invalid SSL certificate", code: 1)
-                    disconnectStream(error)
-                    return
+        if let sec = security {
+            if !certValidated && [.HasBytesAvailable, .HasSpaceAvailable].contains(eventCode) {
+                let possibleTrust: AnyObject? = aStream.propertyForKey(kCFStreamPropertySSLPeerTrust as String)
+                if let trust: AnyObject = possibleTrust {
+                    let domain: AnyObject? = aStream.propertyForKey(kCFStreamSSLPeerName as String)
+                    if sec.isValid(trust as! SecTrustRef, domain: domain as! String?) {
+                        certValidated = true
+                    } else {
+                        let error = errorWithDetail("Invalid SSL certificate", code: 1)
+                        disconnectStream(error)
+                        return
+                    }
                 }
             }
         }
@@ -531,21 +533,23 @@ public class WebSocket : NSObject, NSStreamDelegate {
             fragBuffer = NSData(bytes: buffer, length: bufferLen)
             return
         }
-        if let response = response where response.bytesLeft > 0 {
-            var len = response.bytesLeft
-            var extra = bufferLen - response.bytesLeft
-            if response.bytesLeft > bufferLen {
-                len = bufferLen
-                extra = 0
+        if let response = response {
+            if response.bytesLeft > 0 {
+                var len = response.bytesLeft
+                var extra = bufferLen - response.bytesLeft
+                if response.bytesLeft > bufferLen {
+                    len = bufferLen
+                    extra = 0
+                }
+                response.bytesLeft -= len
+                response.buffer?.appendData(NSData(bytes: buffer, length: len))
+                processResponse(response)
+                let offset = bufferLen - extra
+                if extra > 0 {
+                    processExtra((buffer+offset), bufferLen: extra)
+                }
+                return
             }
-            response.bytesLeft -= len
-            response.buffer?.appendData(NSData(bytes: buffer, length: len))
-            processResponse(response)
-            let offset = bufferLen - extra
-            if extra > 0 {
-                processExtra((buffer+offset), bufferLen: extra)
-            }
-            return
         } else {
             let isFin = (FinMask & buffer[0])
             let receivedOpcode = OpCode(rawValue: (OpCodeMask & buffer[0]))
@@ -802,7 +806,7 @@ public class WebSocket : NSObject, NSStreamDelegate {
                     total += len
                 }
                 if total >= offset {
-                    if let queue = self?.queue, callback = writeCompletion {
+                    if let queue = self?.queue, let callback = writeCompletion {
                         dispatch_async(queue) {
                             callback()
                         }
